@@ -1,0 +1,170 @@
+<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>
+ html,body{margin:0;height:100%;font-family:system-ui,-apple-system,Segoe UI,sans-serif;background:#fff}
+ #wrap{position:relative;width:100%;height:100%;display:flex;flex-direction:column}
+ #top{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;
+   padding:10px 14px 4px}
+ #title{font-size:13px;font-weight:600;color:#111}
+ #sub{font-size:11px;color:#777;margin-top:2px}
+ .btns{display:flex;gap:4px}
+ .btns button{padding:5px 12px;border:1px solid #d8d8d8;background:#fff;border-radius:6px;
+   cursor:pointer;font-size:11px;color:#333}
+ .btns button.on{background:#b2182b;border-color:#b2182b;color:#fff;font-weight:600}
+ #legend{display:flex;gap:14px;font-size:11px;color:#333;align-items:center}
+ #legend span{display:inline-flex;align-items:center;gap:5px}
+ #legend i{width:12px;height:3px;border-radius:2px;display:inline-block}
+ #chartbox{position:relative;flex:1;min-height:0;padding:0 10px 10px}
+ svg{width:100%;height:100%;display:block;overflow:visible}
+ .grid line{stroke:#eee;stroke-width:1}
+ .axis text{fill:#888;font-size:10px}
+ .axis path,.axis line{stroke:#ddd}
+ .lreal{fill:none;stroke:#1b1b1b;stroke-width:2}
+ .lpred{fill:none;stroke:#b2182b;stroke-width:2}
+ .dot{r:3.2}
+ #tip{position:absolute;pointer-events:none;background:rgba(20,20,20,.92);color:#fff;
+   font-size:11px;padding:7px 10px;border-radius:6px;line-height:1.5;display:none;
+   box-shadow:0 2px 10px rgba(0,0,0,.25);white-space:nowrap;z-index:5}
+ #tip b{font-weight:600}
+ .guide{stroke:#bbb;stroke-width:1;stroke-dasharray:3,3}
+</style></head><body>
+<div id="wrap">
+  <div id="top">
+    <div>
+      <div id="title">CABA &middot; incidentes reales vs. predichos (XGBoost) &mdash; período de test</div>
+      <div id="sub"></div>
+    </div>
+    <div id="legend">
+      <span><i style="background:#1b1b1b"></i>Real</span>
+      <span><i style="background:#b2182b"></i>Predicho (XGB)</span>
+    </div>
+    <div class="btns" id="bg"></div>
+  </div>
+  <div id="chartbox">
+    <svg id="svg" viewBox="0 0 1000 420" preserveAspectRatio="none"></svg>
+    <div id="tip"></div>
+  </div>
+</div>
+<script src="datos.js"></script>
+<script>
+var D = window.__DATOS__;
+var GRANS = [['dia','Día'], ['semana','Semana'], ['mes','Mes']];
+var st = {g: 'semana'};
+
+var svgNS = 'http://www.w3.org/2000/svg';
+var svg = document.getElementById('svg');
+var tip = document.getElementById('tip');
+var chartbox = document.getElementById('chartbox');
+var sub = document.getElementById('sub');
+
+var W = 1000, H = 420, M = {t: 16, r: 16, b: 34, l: 46};
+
+function el(tag, attrs){
+  var e = document.createElementNS(svgNS, tag);
+  for (var k in attrs) e.setAttribute(k, attrs[k]);
+  return e;
+}
+
+function fmtNum(x){ return (Math.round(x*10)/10).toString(); }
+
+function pintar(){
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+  var serie = D[st.g];
+  var n = serie.fechas.length;
+  var innerW = W - M.l - M.r, innerH = H - M.t - M.b;
+
+  var vmax = 0;
+  for (var i=0;i<n;i++){
+    if (serie.real[i] > vmax) vmax = serie.real[i];
+    if (serie.predicho[i] > vmax) vmax = serie.predicho[i];
+  }
+  vmax = vmax * 1.12; if (!(vmax>0)) vmax = 1;
+
+  function x(i){ return M.l + (n<=1 ? innerW/2 : innerW * i/(n-1)); }
+  function y(v){ return M.t + innerH * (1 - v/vmax); }
+
+  // gridlines + y axis
+  var gTicks = 5, gg = el('g', {'class':'grid'});
+  var ga = el('g', {'class':'axis'});
+  for (var t=0;t<=gTicks;t++){
+    var v = vmax * t / gTicks;
+    var yy = y(v);
+    gg.appendChild(el('line', {x1:M.l, x2:W-M.r, y1:yy, y2:yy}));
+    var lab = el('text', {x:M.l-8, y:yy+3, 'text-anchor':'end'});
+    lab.textContent = fmtNum(v);
+    ga.appendChild(lab);
+  }
+  svg.appendChild(gg); svg.appendChild(ga);
+
+  // x axis ticks (subsampled)
+  var maxTicks = 9;
+  var step = Math.max(1, Math.ceil(n / maxTicks));
+  var gax = el('g', {'class':'axis'});
+  for (var i=0;i<n;i+=step){
+    var lab = el('text', {x:x(i), y:H-M.b+16, 'text-anchor':'middle'});
+    lab.textContent = serie.fechas[i];
+    gax.appendChild(lab);
+  }
+  svg.appendChild(gax);
+
+  // lines
+  function pathFor(vals){
+    var d = '';
+    for (var i=0;i<n;i++){ d += (i===0?'M':'L') + x(i) + ',' + y(vals[i]) + ' '; }
+    return d;
+  }
+  svg.appendChild(el('path', {d: pathFor(serie.real), 'class':'lreal'}));
+  svg.appendChild(el('path', {d: pathFor(serie.predicho), 'class':'lpred'}));
+
+  // hover overlay
+  var guide = el('line', {'class':'guide', y1:M.t, y2:H-M.b, x1:-100, x2:-100});
+  var dotR = el('circle', {'class':'dot', fill:'#1b1b1b', cx:-100, cy:-100});
+  var dotP = el('circle', {'class':'dot', fill:'#b2182b', cx:-100, cy:-100});
+  svg.appendChild(guide); svg.appendChild(dotR); svg.appendChild(dotP);
+
+  var rectHit = el('rect', {x:M.l, y:M.t, width:innerW, height:innerH, fill:'transparent'});
+  rectHit.addEventListener('mousemove', function(ev){
+    var pt = svg.createSVGPoint();
+    pt.x = ev.clientX; pt.y = ev.clientY;
+    var loc = pt.matrixTransform(svg.getScreenCTM().inverse());
+    var i = Math.round((loc.x - M.l) / (innerW / Math.max(1,(n-1))));
+    if (i < 0) i = 0; if (i > n-1) i = n-1;
+    var xi = x(i);
+    guide.setAttribute('x1', xi); guide.setAttribute('x2', xi);
+    dotR.setAttribute('cx', xi); dotR.setAttribute('cy', y(serie.real[i]));
+    dotP.setAttribute('cx', xi); dotP.setAttribute('cy', y(serie.predicho[i]));
+    var box = chartbox.getBoundingClientRect();
+    var px = ev.clientX - box.left, py = ev.clientY - box.top;
+    tip.style.display = 'block';
+    tip.style.left = Math.min(px+14, box.width-160) + 'px';
+    tip.style.top = Math.max(py-58, 4) + 'px';
+    tip.innerHTML = '<b>' + serie.fechas[i] + '</b><br>Real: <b>' + fmtNum(serie.real[i]) +
+                     '</b><br>Predicho: <b>' + fmtNum(serie.predicho[i]) + '</b>';
+  });
+  rectHit.addEventListener('mouseleave', function(){
+    tip.style.display = 'none';
+    guide.setAttribute('x1', -100); guide.setAttribute('x2', -100);
+    dotR.setAttribute('cx', -100); dotP.setAttribute('cx', -100);
+  });
+  svg.appendChild(rectHit);
+
+  sub.textContent = serie.fechas[0] + ' \u2192 ' + serie.fechas[n-1] + ' \u00b7 ' + n + (
+    st.g === 'dia' ? ' d\u00edas' : (st.g === 'semana' ? ' semanas' : ' meses'));
+}
+
+var bg = document.getElementById('bg');
+GRANS.forEach(function(gr){
+  var b = document.createElement('button');
+  b.textContent = gr[1]; b.dataset.v = gr[0];
+  if (gr[0] === st.g) b.className = 'on';
+  b.onclick = function(){
+    st.g = gr[0];
+    Array.prototype.forEach.call(bg.children, function(x){ x.classList.toggle('on', x.dataset.v === st.g); });
+    pintar();
+  };
+  bg.appendChild(b);
+});
+
+pintar();
+window.addEventListener('resize', pintar);
+</script>
+</body></html>
